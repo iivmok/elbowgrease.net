@@ -105,3 +105,28 @@ export interface ITestType {
   nullableArr?: number[] | null;
 }
 ```
+
+### Usage
+
+`doBarSaga.ts`
+```ts
+import { Action } from "redux-actions";
+import { SagaIterator } from "redux-saga";
+import { put, takeLatest } from "redux-saga/effects";
+import * as Actions from "../actions";
+import { Backend } from "./backend";
+import { ITestType } from "./models";
+
+function* doBar(action: Action<ITestType>) {
+  try {
+    const otherType = yield* Backend.Foo.Bar(action.payload, "foobar");
+    yield put(Actions.doBarSuccess(otherType));
+  } catch (err) {
+    // process error
+  }
+}
+
+export default function* doBarSaga(): SagaIterator {
+  yield takeLatest(Actions.doBar, doBar);
+}
+```

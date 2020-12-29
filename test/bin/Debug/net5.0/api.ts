@@ -1,7 +1,5 @@
 import { call, select } from "redux-saga/effects";
 
-function getAccessToken() {}
-
 export interface CallOptions {
   body?: any;
   anonymous?: boolean;

@@ -30,6 +30,14 @@ namespace Elbowgrease
         public List<string> Notes { get; } = new();
         public string NotesComment => $"/*{string.Join(", ", Notes)}*/";
 
+        private Type _type;
+        private string _typeTemplate = "{type}";
+
+        private static readonly Type[] StringTypes = {typeof(string), typeof(Guid), typeof(char)};
+        private static readonly Type[] FormTypes = {typeof(IFormFile), typeof(IFormFileCollection), typeof(char)};
+        private static readonly Type[] ListTypes = {typeof(List<>), typeof(IList<>), typeof(IEnumerable<>)};
+        private readonly GeneratorContext _context;
+
         public TypeScriptType(PropertyInfo property, GeneratorContext context)
             :this(property.PropertyType, context, property.HasAttribute<RequiredAttribute>(), LowerFirst(property.Name))
         {
@@ -46,35 +54,36 @@ namespace Elbowgrease
             Name = name;
             _context = context;
             _type = realType;
+            var reduced = ReduceNullable() || ReduceGeneric() || ReduceArray();
+            if (!reduced)
+            {
+                if (_type == typeof(DateTime))
+                {
+                    Type = context.DateTimeType;
+                }
+                else if (_type == typeof(IFormFileCollection))
+                {
+                    Type = "FormData";
+                }
+                else if (StringTypes.Contains(_type))
+                {
+                    Type = "string";
+                }
+                else if (_type.IsPrimitive)
+                {
+                    if (_type == typeof(bool))
+                        Type = "boolean";
+                    else
+                        Type = "number";
+                }
+                else if (Type == null)
+                {
+                    //A reference type, so it's unknown to us, we need a reference to it
+                    Type = _context.NameFormatter.Invoke(_type);
+                    _context.ReferenceType(_type);
+                }
+            }
 
-            while (ReduceNullable() || ReduceGeneric() || ReduceArray()) { }
-
-            if (_type == typeof(DateTime))
-            {
-                Type = context.DateTimeType;
-            }
-            else if (_type == typeof(IFormFileCollection))
-            {
-                Type = "FormData";
-            }
-            else if (StringTypes.Contains(_type))
-            {
-                Type = "string";
-            }
-            else if (_type.IsPrimitive)
-            {
-                if (_type == typeof(bool))
-                    Type = "boolean";
-                else
-                    Type = "number";
-            }
-            else if(Type == null)
-            {
-                //A reference type, so it's unknown to us, we need a reference to it
-                Type = _context.NameFormatter.Invoke(_type);
-                _context.ReferenceType(_type);
-            }
-            
             Type = _typeTemplate.Replace("{type}", Type);
             
             if (FullTypeComment)
@@ -100,14 +109,6 @@ namespace Elbowgrease
         {
             return name[0].ToString().ToLower() + name.Substring(1);
         }
-
-        private Type _type;
-        private string _typeTemplate = "{type}";
-
-        private static readonly Type[] StringTypes = {typeof(string), typeof(Guid), typeof(char)};
-        private static readonly Type[] FormTypes = {typeof(IFormFile), typeof(IFormFileCollection), typeof(char)};
-        private static readonly Type[] ListTypes = {typeof(List<>), typeof(IList<>), typeof(IEnumerable<>)};
-        private readonly GeneratorContext _context;
 
         private void MarkAsArray()
         {
@@ -141,8 +142,10 @@ namespace Elbowgrease
             
             if (ListTypes.Contains(genType) || ImplementsListInterface(_type) || ImplementsListInterface(genType))
             {
-                _type = _type.GenericTypeArguments[0];
-                MarkAsArray();
+                var inner = new TypeScriptType(_type.GenericTypeArguments[0], _context);
+                Notes.AddRange(inner.Notes);
+                NameMods += inner.NameMods;
+                ModType(inner.Type, "{type}[]");
                 return true;
             }
 
@@ -153,7 +156,9 @@ namespace Elbowgrease
                 Type = $"Record<{key.Type}, {val.Type}>";
                 Notes.AddRange(key.Notes);
                 Notes.AddRange(val.Notes);
-                return true;
+                NameMods += key.NameMods;
+                NameMods += val.NameMods;
+                return false;
             }
 
             throw new Exception("Unsupported generic type");
@@ -164,8 +169,10 @@ namespace Elbowgrease
             if (!_type.IsArray)
                 return false;
             
-            _type = _type.GetElementType();
-            MarkAsArray();
+            var inner = new TypeScriptType(_type.GetElementType(), _context);
+            Notes.AddRange(inner.Notes);
+            NameMods += inner.NameMods;
+            ModType(inner.Type, "{type}[]");
             return true;
         }
 
@@ -175,17 +182,28 @@ namespace Elbowgrease
 
             if (nullableType == null)
                 return false;
+
+            var inner = new TypeScriptType(nullableType, _context);
             
-            _type = nullableType;
+            Notes.AddRange(inner.Notes);
+            NameMods += inner.NameMods;
+            Type = inner.Type;
             
             NameMods += "?";
             
             if (ShowNull)
             {
-                _typeTemplate = $"{_typeTemplate} | null";
+                ModType(inner.Type, "{type} | null");
             }
 
             return true;
+        }
+        private void ModType(string type, string mod)
+        {
+            if (type.Contains("[]") || type.Contains("|"))
+                Type = mod.Replace("{type}", $"({type})");
+            else
+                Type = mod.Replace("{type}", type);
         }
     }
 }
